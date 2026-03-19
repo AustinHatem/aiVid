@@ -99,8 +99,8 @@ def generate_voiceover_script() -> str:
                     "a secured video chat app where you can meet and talk to real, beautiful people worldwide.\n\n"
                     "Rules:\n"
                     "- The voiceover is read by a warm, friendly female narrator.\n"
-                    "- It must be 2-3 sentences, around 20-30 words total.\n"
-                    "- It should take EXACTLY about 9 seconds to say at a natural pace.\n"
+                    "- It must be 1-2 SHORT sentences, MAX 18 words total.\n"
+                    "- It should take about 7-8 seconds to say at a natural pace. Keep it SHORT.\n"
                     "- Enthusiastic, inviting, conversational tone.\n"
                     "- Must mention 'Someone Somewhere' by name at least once.\n"
                     "- Highlight features like: video chat, meeting new people, security, global users, beautiful people.\n"
@@ -123,8 +123,9 @@ def generate_voiceover_script() -> str:
     return script
 
 
-def generate_voiceover_audio(script: str, output_path: str) -> str:
-    """Use OpenAI TTS to generate a female voiceover audio file."""
+def generate_voiceover_audio(script: str, output_path: str, max_duration: float = 9.0) -> str:
+    """Use OpenAI TTS to generate a female voiceover audio file.
+    If the audio exceeds max_duration, speed it up with ffmpeg to fit."""
     voice = random.choice(FEMALE_VOICES)
     print(f"[VO] Generating TTS audio (voice: {voice})...")
     response = openai.audio.speech.create(
@@ -133,8 +134,32 @@ def generate_voiceover_audio(script: str, output_path: str) -> str:
         input=script,
         speed=0.95,  # slightly slower for clarity
     )
-    with open(output_path, "wb") as f:
+    raw_path = output_path + ".raw.mp3"
+    with open(raw_path, "wb") as f:
         f.write(response.content)
+
+    # Check duration
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "csv=p=0", raw_path],
+        capture_output=True, text=True
+    )
+    duration = float(probe.stdout.strip())
+    print(f"      TTS duration: {duration:.1f}s (max: {max_duration}s)")
+
+    if duration > max_duration:
+        # Speed up audio to fit within max_duration
+        speed = duration / max_duration
+        print(f"      Speeding up by {speed:.2f}x to fit...")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", raw_path, "-filter:a", f"atempo={speed}",
+             "-c:a", "libmp3lame", "-q:a", "2", output_path],
+            capture_output=True, text=True, timeout=30
+        )
+        os.remove(raw_path)
+    else:
+        os.rename(raw_path, output_path)
+
     print(f"      Voiceover saved: {output_path}")
     return output_path
 

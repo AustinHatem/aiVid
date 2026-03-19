@@ -1,0 +1,13 @@
+# Output files
+output/
+
+# Environment / secrets
+.env
+*.env
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc

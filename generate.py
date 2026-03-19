@@ -5,6 +5,7 @@ import os
 import sys
 import random
 from openai import OpenAI
+from PIL import Image, ImageDraw, ImageFont
 
 # --- Config ---
 # Video 1: Kling 3.0 — speaking the hook (native audio)
@@ -193,19 +194,247 @@ def pick_font() -> str:
     return path
 
 
+# TikTok-style title color schemes: (bg_hex, text_hex)
+TITLE_COLORS = [
+    ("#FFFFFF", "#000000"),  # white bg, black text
+    ("#000000", "#FFFFFF"),  # black bg, white text
+    ("#d72b3b", "#FFFFFF"),  # TikTok red bg, white text
+]
+
+# Example titles to teach GPT the style
+EXAMPLE_TITLES = [
+    "this app is going viral 🔥",
+    "this app is insane 😍",
+    "POV: you found the best app 👀",
+    "why is nobody talking about this 🤯",
+    "girls love this app 💕",
+    "you NEED this app 🙌",
+]
+
+
+def generate_title() -> str:
+    """Use GPT to generate a short TikTok-style title with emoji."""
+    print("[TITLE] Generating title...")
+    examples_block = "\n".join(f"- {t}" for t in EXAMPLE_TITLES)
+    resp = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You write short TikTok-style title overlays for viral video ads.\n\n"
+                    "Rules:\n"
+                    "- MAX 5-6 words total.\n"
+                    "- Must include 1 emoji at the end.\n"
+                    "- Casual, viral, attention-grabbing tone.\n"
+                    "- All lowercase or mixed case (not ALL CAPS).\n"
+                    "- Do NOT repeat the examples — come up with something fresh.\n"
+                    "- Do NOT use hashtags or quotation marks.\n"
+                    "- Return ONLY the raw title, nothing else.\n\n"
+                    f"Example titles:\n{examples_block}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": "Write a new, unique TikTok-style title overlay for a video chat app ad.",
+            },
+        ],
+        temperature=1.2,
+        max_tokens=30,
+    )
+    title = resp.choices[0].message.content.strip().strip('"').strip("'")
+    print(f"      Title: \"{title}\"")
+    return title
+
+
+def _split_emoji(text: str) -> list:
+    """Split text into runs of (is_emoji, substring)."""
+    import re
+    # Match emoji characters (including modifiers, ZWJ sequences, etc.)
+    emoji_pattern = re.compile(
+        "[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251"
+        "\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF"
+        "\U00002600-\U000026FF\U0000FE0F\U0000200D]+"
+    )
+    parts = []
+    last = 0
+    for m in emoji_pattern.finditer(text):
+        if m.start() > last:
+            parts.append((False, text[last:m.start()]))
+        parts.append((True, m.group()))
+        last = m.end()
+    if last < len(text):
+        parts.append((False, text[last:]))
+    return parts
+
+
+def render_title_image(title: str, font_path: str, output_path: str) -> str:
+    """
+    Render a TikTok-style title as a transparent PNG overlay.
+    Each line gets its own tight rounded-corner background box.
+    Uses TikTokSans-Bold for text, Apple Color Emoji for emoji.
+    """
+    bg_hex, text_hex = random.choice(TITLE_COLORS)
+    print(f"[TITLE] Rendering title image (bg={bg_hex}, text={text_hex})")
+
+    img = Image.new("RGBA", (1080, 1920), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Text font: TikTokSans-Bold
+    tiktok_font_path = os.path.join(FONTS_DIR, "TikTokSans-Bold.ttf")
+    font_size = 48
+    try:
+        text_font = ImageFont.truetype(tiktok_font_path, font_size)
+    except Exception:
+        text_font = ImageFont.truetype(font_path, font_size)
+
+    # Emoji font: Apple Color Emoji (macOS system font)
+    emoji_font = None
+    emoji_font_path = "/System/Library/Fonts/Apple Color Emoji.ttc"
+    if os.path.exists(emoji_font_path):
+        try:
+            emoji_font = ImageFont.truetype(emoji_font_path, font_size)
+        except Exception:
+            pass
+
+    # Strip emojis for line-splitting (measure with text font only)
+    parts = _split_emoji(title)
+    text_only = "".join(s for is_emoji, s in parts if not is_emoji).strip()
+    emoji_only = "".join(s for is_emoji, s in parts if is_emoji).strip()
+
+    # Split text into lines (without emoji — emoji goes at end of last line)
+    words = text_only.split()
+    lines = []
+    current_line = ""
+    for word in words:
+        test = f"{current_line} {word}".strip()
+        bbox = draw.textbbox((0, 0), test, font=text_font)
+        if bbox[2] - bbox[0] > 700 and current_line:
+            lines.append(current_line)
+            current_line = word
+        else:
+            current_line = test
+    if current_line:
+        lines.append(current_line)
+
+    # Parse colors
+    bg_color = tuple(int(bg_hex.lstrip("#")[i:i+2], 16) for i in (0, 2, 4)) + (240,)
+    text_color = text_hex
+
+    pad_x, pad_y = 40, 24
+    gap = 0
+    corner_radius = 12
+    y_start = 360
+
+    for i, line in enumerate(lines):
+        # On the last line, append emoji to measure total width
+        is_last = (i == len(lines) - 1)
+        emoji_w = 0
+        if is_last and emoji_only and emoji_font:
+            eb = draw.textbbox((0, 0), f" {emoji_only}", font=emoji_font)
+            emoji_w = eb[2] - eb[0]
+
+        bbox = draw.textbbox((0, 0), line, font=text_font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+        box_w = text_w + emoji_w + pad_x * 2
+        box_h = text_h + pad_y * 2
+        box_x = (1080 - box_w) // 2
+        box_y = y_start + i * (box_h + gap)
+
+        # Draw rounded rectangle background
+        draw.rounded_rectangle(
+            [box_x, box_y, box_x + box_w, box_y + box_h],
+            radius=corner_radius,
+            fill=bg_color,
+        )
+
+        # Draw text
+        text_x = box_x + pad_x - bbox[0]
+        text_y = box_y + pad_y - bbox[1]
+        draw.text((text_x, text_y), line, fill=text_color, font=text_font)
+
+        # Draw emoji after text on last line
+        if is_last and emoji_only and emoji_font:
+            emoji_x = text_x + text_w + bbox[0]
+            draw.text(
+                (emoji_x, text_y), f" {emoji_only}",
+                font=emoji_font, embedded_color=True,
+            )
+
+    img.save(output_path, "PNG")
+    print(f"      Title image: {output_path}")
+    return output_path
+
+
+def pick_subtitle_style() -> dict:
+    """Pick a random subtitle style from 4 options."""
+    styles = [
+        {
+            "name": "white_outline",
+            "desc": "White text, black outline",
+            "primary": "&H00FFFFFF",
+            "outline_col": "&H00000000",
+            "back": "&H80000000",
+            "border_style": 1,
+            "outline": 5,
+            "shadow": 2,
+            "bold": -1,
+            "fontsize": 88,
+        },
+        {
+            "name": "pink_box",
+            "desc": "Dark text on pink/beige box",
+            "primary": "&H00252525",
+            "outline_col": "&H00C8D4E8",  # BGR for soft pinkish beige
+            "back": "&H00C8D4E8",
+            "border_style": 3,
+            "outline": 22,
+            "shadow": 0,
+            "bold": -1,
+            "fontsize": 80,
+        },
+        {
+            "name": "blue_box",
+            "desc": "White text on blue/purple box",
+            "primary": "&H00FFFFFF",
+            "outline_col": "&H00B04828",  # BGR for blue-purple
+            "back": "&H00B04828",
+            "border_style": 3,
+            "outline": 22,
+            "shadow": 0,
+            "bold": -1,
+            "fontsize": 80,
+        },
+        {
+            "name": "dark_box",
+            "desc": "White text on dark box (70% opacity)",
+            "primary": "&H00FFFFFF",
+            "outline_col": "&H4D282828",  # dark gray at 70% opacity
+            "back": "&H4D282828",
+            "border_style": 3,
+            "outline": 22,
+            "shadow": 0,
+            "bold": -1,
+            "fontsize": 80,
+        },
+    ]
+    return random.choice(styles)
+
+
 def generate_ass_subtitles(talk_words: list, vo_words: list, ass_path: str, font_path: str, vo_offset: float = 5.0) -> str:
     """
     Generate an ASS subtitle file with TikTok-style captions.
-    - talk_words: word timestamps from the talk audio (0-5s)
-    - vo_words: word timestamps from the voiceover (offset by vo_offset)
-    - font_path: path to .ttf font file to use
-    - Groups words into chunks of 3-4 for readability
+    Single layer, clean boxes. Groups words into chunks of 3.
     """
-    # Extract font family name from filename (e.g. "Montserrat-Bold.ttf" -> "Montserrat Bold")
     font_name = os.path.splitext(os.path.basename(font_path))[0].replace("-", " ")
-    print(f"[CAP] Generating ASS subtitles -> {ass_path} (font: {font_name})")
+    style = pick_subtitle_style()
+    print(f"[CAP] Generating ASS subtitles -> {ass_path}")
+    print(f"      Font: {font_name} | Style: {style['desc']}")
 
-    # ASS header — bold white text, black outline, centered lower-third
+    s = style
     header = f"""[Script Info]
 Title: Captions
 ScriptType: v4.00+
@@ -215,22 +444,20 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},88,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,40,40,400,1
+Style: Default,{font_name},{s['fontsize']},{s['primary']},&H000000FF,{s['outline_col']},{s['back']},{s['bold']},0,0,0,100,100,0,0,{s['border_style']},{s['outline']},{s['shadow']},2,40,40,400,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
     def format_time(seconds: float) -> str:
-        """Convert seconds to ASS timestamp format H:MM:SS.CC"""
         h = int(seconds // 3600)
         m = int((seconds % 3600) // 60)
-        s = int(seconds % 60)
+        sec = int(seconds % 60)
         cs = int((seconds % 1) * 100)
-        return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+        return f"{h}:{m:02d}:{sec:02d}.{cs:02d}"
 
     def words_to_events(words: list, time_offset: float = 0.0) -> list:
-        """Group words into chunks of 3-4 and create ASS dialogue events."""
         events = []
         chunk_size = 3
         i = 0
@@ -239,7 +466,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             text = " ".join(w["word"] for w in chunk)
             start = chunk[0]["start"] + time_offset
             end = chunk[-1]["end"] + time_offset
-            # Add a tiny buffer so captions don't flicker
             end = max(end, start + 0.3)
             events.append(
                 f"Dialogue: 0,{format_time(start)},{format_time(end)},Default,,0,0,0,,"
@@ -249,10 +475,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return events
 
     events = []
-    # Talk captions (0-5s)
     if talk_words:
         events.extend(words_to_events(talk_words, time_offset=0.0))
-    # Voiceover captions (starting at vo_offset)
     if vo_words:
         events.extend(words_to_events(vo_words, time_offset=vo_offset))
 
@@ -375,7 +599,7 @@ def pick_song() -> str:
     return path
 
 
-def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, final_path: str) -> str:
+def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, final_path: str, title_img_path: str = None) -> str:
     """
     Stitch final video:
       1. Talk video (5s, with audio)
@@ -384,21 +608,30 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, 
       4. Random screen recording #2 (3.5s)
     Plus: background song (low volume, full duration)
     Plus: voiceover audio starting at 5s (after talk ends)
+    Plus: optional title overlay PNG (full duration, top of screen)
     Screen recordings are scaled to 1080x1920 to match.
     """
     sr1, sr2 = pick_screen_recordings()
     song = pick_song()
     print("[STITCH] Stitching final video with ffmpeg...")
 
-    # Total duration: 5 + 3.5 + 3 + 3.5 = 15s
-    # Voiceover starts at 5s (after talk), plays over segments 2-4
-
-    # Inputs:
-    #   0 = talk, 1 = screen rec 1, 2 = react, 3 = screen rec 2,
-    #   4 = ssUI.png, 5 = background song, 6 = voiceover
-    # Escape backslashes and colons in paths for ffmpeg filter
     ass_escaped = ass_path.replace("\\", "\\\\").replace(":", "\\:")
     fonts_escaped = FONTS_DIR.replace("\\", "\\\\").replace(":", "\\:")
+
+    # Build input list and filter
+    inputs = [
+        "-i", talk_path,     # 0: talk
+        "-i", sr1,           # 1: screen recording 1
+        "-i", react_path,    # 2: react
+        "-i", sr2,           # 3: screen recording 2
+        "-i", UI_OVERLAY,    # 4: ssUI.png
+        "-i", song,          # 5: background song
+        "-i", vo_path,       # 6: voiceover audio
+    ]
+
+    # Title overlay is input 7 if present
+    if title_img_path:
+        inputs.extend(["-i", title_img_path])  # 7: title PNG
 
     filter_complex = (
         # --- Talk: trim to exactly 5s max (already 1080x1920) ---
@@ -419,26 +652,32 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, 
         # --- Concat all 4 video segments ---
         "[talk_v][talk_a][sr1_v][sr1_a][react_v][react_a][sr2_v][sr2_a]"
         "concat=n=4:v=1:a=1[cat_v][concat_a];"
-        # --- Burn in ASS captions ---
-        f"[cat_v]ass={ass_escaped}:fontsdir={fonts_escaped}[outv];"
+    )
+
+    # Burn in captions, then optionally overlay title
+    if title_img_path:
+        filter_complex += (
+            f"[cat_v]ass={ass_escaped}:fontsdir={fonts_escaped}[captioned];"
+            "[captioned][7:v]overlay=0:0:enable='between(t,0,5)'[outv];"
+        )
+    else:
+        filter_complex += (
+            f"[cat_v]ass={ass_escaped}:fontsdir={fonts_escaped}[outv];"
+        )
+
+    filter_complex += (
         # --- Background song: trim to 15s, low volume ---
         "[5:a]atrim=duration=15,asetpts=PTS-STARTPTS,volume=0.08[song];"
         # --- Voiceover: delay by 5s (starts after talk), trim to 10s max ---
         "[6:a]atrim=duration=10,asetpts=PTS-STARTPTS,volume=1.8[vo_trim];"
         "[vo_trim]adelay=5000|5000[vo];"
-        # --- Mix all 3 audio layers: concat audio + song + voiceover ---
+        # --- Mix all 3 audio layers ---
         "[concat_a][song][vo]amix=inputs=3:duration=first:dropout_transition=2[outa]"
     )
 
     cmd = [
         "ffmpeg", "-y",
-        "-i", talk_path,     # 0: talk
-        "-i", sr1,           # 1: screen recording 1
-        "-i", react_path,    # 2: react
-        "-i", sr2,           # 3: screen recording 2
-        "-i", UI_OVERLAY,    # 4: ssUI.png
-        "-i", song,          # 5: background song
-        "-i", vo_path,       # 6: voiceover audio
+        *inputs,
         "-filter_complex", filter_complex,
         "-map", "[outv]",
         "-map", "[outa]",
@@ -448,12 +687,13 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, 
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",
-        "-t", "15",  # hard cap at 15 seconds
+        "-t", "15",
         final_path,
     ]
 
+    has_title = "YES" if title_img_path else "no"
     print(f"      Segments: talk(5s) → screenRec(3.5s) → react+UI(3s) → screenRec(3.5s)")
-    print(f"      Song: {song} | Voiceover: {vo_path}")
+    print(f"      Song: {song} | Voiceover: {vo_path} | Title: {has_title}")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         print(f"      ffmpeg stderr: {result.stderr[-500:]}")
@@ -498,9 +738,16 @@ def main():
     ass_path = os.path.join(OUTPUT_DIR, f"{basename}_captions.ass")
     generate_ass_subtitles(talk_words, vo_words, ass_path, font_path, vo_offset=5.0)
 
-    # Step 8: Stitch everything together (with burned-in captions)
+    # Step 7.5: 40% chance to add a TikTok-style title overlay
+    title_img_path = None
+    if random.random() < 0.4:
+        title_text = generate_title()
+        title_img_path = os.path.join(OUTPUT_DIR, f"{basename}_title.png")
+        render_title_image(title_text, font_path, title_img_path)
+
+    # Step 8: Stitch everything together (with burned-in captions + optional title)
     final_path = os.path.join(OUTPUT_DIR, f"{basename}_final.mp4")
-    stitch_videos(talk_path, react_path, vo_path, ass_path, final_path)
+    stitch_videos(talk_path, react_path, vo_path, ass_path, final_path, title_img_path)
 
     print(f"\n{'='*50}")
     print(f"  Hook:      \"{hook}\"")

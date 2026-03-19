@@ -14,6 +14,7 @@ REACT_MODEL = "kling-video/v2.1/pro/image-to-video"
 PHOTOS_DIR = "femalePhotos"
 SCREEN_REC_DIR = "screenRecording"
 SONGS_DIR = "songs"
+FONTS_DIR = "fonts"
 OUTPUT_DIR = "output"
 UI_OVERLAY = "ssUI.png"
 
@@ -138,6 +139,106 @@ def generate_voiceover_audio(script: str, output_path: str) -> str:
     return output_path
 
 
+def transcribe_audio(audio_path: str) -> list:
+    """Use Whisper to get word-level timestamps from an audio file."""
+    print(f"[CAP] Transcribing {audio_path} for captions...")
+    with open(audio_path, "rb") as f:
+        transcript = openai.audio.transcriptions.create(
+            model="whisper-1",
+            file=f,
+            response_format="verbose_json",
+            timestamp_granularities=["word"],
+        )
+    words = [{"word": w.word, "start": w.start, "end": w.end} for w in transcript.words]
+    print(f"      Got {len(words)} words with timestamps")
+    return words
+
+
+def pick_font() -> str:
+    """Pick a random font from the fonts directory."""
+    files = sorted(
+        f for f in os.listdir(FONTS_DIR)
+        if f.lower().endswith((".ttf", ".otf"))
+    )
+    if not files:
+        raise FileNotFoundError(f"No fonts found in {FONTS_DIR}/")
+    picked = random.choice(files)
+    path = os.path.join(FONTS_DIR, picked)
+    print(f"      Font: {picked}")
+    return path
+
+
+def generate_ass_subtitles(talk_words: list, vo_words: list, ass_path: str, font_path: str, vo_offset: float = 5.0) -> str:
+    """
+    Generate an ASS subtitle file with TikTok-style captions.
+    - talk_words: word timestamps from the talk audio (0-5s)
+    - vo_words: word timestamps from the voiceover (offset by vo_offset)
+    - font_path: path to .ttf font file to use
+    - Groups words into chunks of 3-4 for readability
+    """
+    # Extract font family name from filename (e.g. "Montserrat-Bold.ttf" -> "Montserrat Bold")
+    font_name = os.path.splitext(os.path.basename(font_path))[0].replace("-", " ")
+    print(f"[CAP] Generating ASS subtitles -> {ass_path} (font: {font_name})")
+
+    # ASS header — bold white text, black outline, centered lower-third
+    header = f"""[Script Info]
+Title: Captions
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_name},88,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,40,40,400,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+    def format_time(seconds: float) -> str:
+        """Convert seconds to ASS timestamp format H:MM:SS.CC"""
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        cs = int((seconds % 1) * 100)
+        return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+    def words_to_events(words: list, time_offset: float = 0.0) -> list:
+        """Group words into chunks of 3-4 and create ASS dialogue events."""
+        events = []
+        chunk_size = 3
+        i = 0
+        while i < len(words):
+            chunk = words[i:i + chunk_size]
+            text = " ".join(w["word"] for w in chunk)
+            start = chunk[0]["start"] + time_offset
+            end = chunk[-1]["end"] + time_offset
+            # Add a tiny buffer so captions don't flicker
+            end = max(end, start + 0.3)
+            events.append(
+                f"Dialogue: 0,{format_time(start)},{format_time(end)},Default,,0,0,0,,"
+                f"{{\\an2}}{text}"
+            )
+            i += chunk_size
+        return events
+
+    events = []
+    # Talk captions (0-5s)
+    if talk_words:
+        events.extend(words_to_events(talk_words, time_offset=0.0))
+    # Voiceover captions (starting at vo_offset)
+    if vo_words:
+        events.extend(words_to_events(vo_words, time_offset=vo_offset))
+
+    with open(ass_path, "w") as f:
+        f.write(header)
+        f.write("\n".join(events) + "\n")
+
+    print(f"      Created {len(events)} caption events")
+    return ass_path
+
+
 def pick_image(photos_dir: str, choice: str = None) -> str:
     """Pick an image from the photos directory. Random if no choice given."""
     files = sorted(
@@ -249,7 +350,7 @@ def pick_song() -> str:
     return path
 
 
-def stitch_videos(talk_path: str, react_path: str, vo_path: str, final_path: str) -> str:
+def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, final_path: str) -> str:
     """
     Stitch final video:
       1. Talk video (5s, with audio)
@@ -270,6 +371,40 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, final_path: str
     # Inputs:
     #   0 = talk, 1 = screen rec 1, 2 = react, 3 = screen rec 2,
     #   4 = ssUI.png, 5 = background song, 6 = voiceover
+    # Escape backslashes and colons in paths for ffmpeg filter
+    ass_escaped = ass_path.replace("\\", "\\\\").replace(":", "\\:")
+    fonts_escaped = FONTS_DIR.replace("\\", "\\\\").replace(":", "\\:")
+
+    filter_complex = (
+        # --- Talk: trim to exactly 5s max (already 1080x1920) ---
+        "[0:v]trim=duration=5,setpts=PTS-STARTPTS[talk_v];"
+        "[0:a]atrim=duration=5,asetpts=PTS-STARTPTS[talk_a];"
+        # --- Screen rec 1: scale to 1080x1920, trim to 3.5s, add silent audio ---
+        "[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=3.5,setpts=PTS-STARTPTS[sr1_v];"
+        "anullsrc=r=44100:cl=stereo[s1];[s1]atrim=duration=3.5[sr1_a];"
+        # --- React: trim to 3s, overlay ssUI.png, add silent audio ---
+        "[2:v]trim=duration=3,setpts=PTS-STARTPTS[react_trim];"
+        "[react_trim][4:v]overlay=0:0[react_v];"
+        "anullsrc=r=44100:cl=stereo[s2];[s2]atrim=duration=3[react_a];"
+        # --- Screen rec 2: scale to 1080x1920, trim to 3.5s, add silent audio ---
+        "[3:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=3.5,setpts=PTS-STARTPTS[sr2_v];"
+        "anullsrc=r=44100:cl=stereo[s3];[s3]atrim=duration=3.5[sr2_a];"
+        # --- Concat all 4 video segments ---
+        "[talk_v][talk_a][sr1_v][sr1_a][react_v][react_a][sr2_v][sr2_a]"
+        "concat=n=4:v=1:a=1[cat_v][concat_a];"
+        # --- Burn in ASS captions ---
+        f"[cat_v]ass={ass_escaped}:fontsdir={fonts_escaped}[outv];"
+        # --- Background song: trim to 15s, low volume ---
+        "[5:a]atrim=duration=15,asetpts=PTS-STARTPTS,volume=0.08[song];"
+        # --- Voiceover: delay by 5s (starts after talk), trim to 10s max ---
+        "[6:a]atrim=duration=10,asetpts=PTS-STARTPTS,volume=1.8[vo_trim];"
+        "[vo_trim]adelay=5000|5000[vo];"
+        # --- Mix all 3 audio layers: concat audio + song + voiceover ---
+        "[concat_a][song][vo]amix=inputs=3:duration=first:dropout_transition=2[outa]"
+    )
+
     cmd = [
         "ffmpeg", "-y",
         "-i", talk_path,     # 0: talk
@@ -279,40 +414,7 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, final_path: str
         "-i", UI_OVERLAY,    # 4: ssUI.png
         "-i", song,          # 5: background song
         "-i", vo_path,       # 6: voiceover audio
-        "-filter_complex",
-        # --- Talk: trim to exactly 5s max (already 1080x1920) ---
-        "[0:v]trim=duration=5,setpts=PTS-STARTPTS[talk_v];"
-        "[0:a]atrim=duration=5,asetpts=PTS-STARTPTS[talk_a];"
-
-        # --- Screen rec 1: scale to 1080x1920, trim to 3.5s, add silent audio ---
-        "[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=3.5,setpts=PTS-STARTPTS[sr1_v];"
-        "anullsrc=r=44100:cl=stereo[s1];[s1]atrim=duration=3.5[sr1_a];"
-
-        # --- React: trim to 3s, overlay ssUI.png, add silent audio ---
-        "[2:v]trim=duration=3,setpts=PTS-STARTPTS[react_trim];"
-        "[react_trim][4:v]overlay=0:0[react_v];"
-        "anullsrc=r=44100:cl=stereo[s2];[s2]atrim=duration=3[react_a];"
-
-        # --- Screen rec 2: scale to 1080x1920, trim to 3.5s, add silent audio ---
-        "[3:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=3.5,setpts=PTS-STARTPTS[sr2_v];"
-        "anullsrc=r=44100:cl=stereo[s3];[s3]atrim=duration=3.5[sr2_a];"
-
-        # --- Concat all 4 video segments ---
-        "[talk_v][talk_a][sr1_v][sr1_a][react_v][react_a][sr2_v][sr2_a]"
-        "concat=n=4:v=1:a=1[outv][concat_a];"
-
-        # --- Background song: trim to 15s, low volume ---
-        "[5:a]atrim=duration=15,asetpts=PTS-STARTPTS,volume=0.08[song];"
-
-        # --- Voiceover: delay by 5s (starts after talk), trim to 10s max ---
-        "[6:a]atrim=duration=10,asetpts=PTS-STARTPTS,volume=1.8[vo_trim];"
-        "[vo_trim]adelay=5000|5000[vo];"
-
-        # --- Mix all 3 audio layers: concat audio + song + voiceover ---
-        "[concat_a][song][vo]amix=inputs=3:duration=first:dropout_transition=2[outa]",
-
+        "-filter_complex", filter_complex,
         "-map", "[outv]",
         "-map", "[outa]",
         "-c:v", "libx264",
@@ -364,9 +466,16 @@ def main():
     vo_path = os.path.join(OUTPUT_DIR, f"{basename}_vo.mp3")
     generate_voiceover_audio(vo_script, vo_path)
 
-    # Step 7: Stitch everything together
+    # Step 7: Generate captions via Whisper + random font
+    talk_words = transcribe_audio(talk_path)
+    vo_words = transcribe_audio(vo_path)
+    font_path = pick_font()
+    ass_path = os.path.join(OUTPUT_DIR, f"{basename}_captions.ass")
+    generate_ass_subtitles(talk_words, vo_words, ass_path, font_path, vo_offset=5.0)
+
+    # Step 8: Stitch everything together (with burned-in captions)
     final_path = os.path.join(OUTPUT_DIR, f"{basename}_final.mp4")
-    stitch_videos(talk_path, react_path, vo_path, final_path)
+    stitch_videos(talk_path, react_path, vo_path, ass_path, final_path)
 
     print(f"\n{'='*50}")
     print(f"  Hook:      \"{hook}\"")

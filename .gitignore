@@ -5,6 +5,9 @@ output/
 .env
 *.env
 
+# Firebase service account
+*-firebase-adminsdk-*.json
+
 # macOS
 .DS_Store
 

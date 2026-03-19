@@ -1,11 +1,20 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import higgsfield_client
 import requests
 import subprocess
 import os
 import sys
 import random
+import glob
+from datetime import datetime
 from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont
+import firebase_admin
+from firebase_admin import credentials, storage
+import gspread
+from elevenlabs.client import ElevenLabs
 
 # --- Config ---
 # Video 1: Kling 3.0 — speaking the hook (native audio)
@@ -18,9 +27,26 @@ SONGS_DIR = "songs"
 FONTS_DIR = "fonts"
 OUTPUT_DIR = "output"
 UI_OVERLAY = "ssUI.png"
+GSHEET_ID = "1h1pPMEshYzfCyqA-xc4NHVcGotQk_-S_LzfFhPaPlhQ"
 
-# Female voices for OpenAI TTS (all sound natural/warm)
-FEMALE_VOICES = ["nova", "shimmer", "alloy"]
+# Firebase + Google Sheets setup
+_sa_files = glob.glob("*-firebase-adminsdk-*.json")
+if _sa_files:
+    _cred = credentials.Certificate(_sa_files[0])
+    firebase_admin.initialize_app(_cred, {"storageBucket": "somesome-a6df1.firebasestorage.app"})
+    _gc = gspread.service_account(filename=_sa_files[0])
+else:
+    _gc = None
+    print("WARNING: No Firebase service account JSON found — uploads/logging will be skipped.")
+
+# ElevenLabs TTS setup
+elevenlabs = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
+# Best female voices on ElevenLabs (name -> voice_id)
+ELEVEN_VOICES = [
+    "21m00Tcm4TlvDq8ikWAM",  # Rachel — warm, calm
+    "EXAVITQu4vr4xnSDxMaL",  # Bella — soft, friendly
+    "MF3mGyEYCl7XYWbV9V6O",  # Elli — young, cheerful
+]
 
 # Example voiceover scripts (~9 seconds each) to teach GPT the style
 EXAMPLE_VOICEOVERS = [
@@ -65,7 +91,8 @@ def generate_hook() -> str:
                     "- The hook is spoken directly to camera by an attractive woman.\n"
                     "- ONE sentence, under 15 words, takes ~5 seconds to say.\n"
                     "- Flirty, confident, curiosity-driven tone.\n"
-                    "- Must mention 'Someone Somewhere' by name.\n"
+                    "- Must mention 'Someone Somewhere' by name — always written as exactly 'Someone Somewhere' (two separate words).\n"
+                    "- Place 'Someone Somewhere' where it flows naturally and can be clearly enunciated.\n"
                     "- Create curiosity, urgency, or a personal invitation.\n"
                     "- Do NOT repeat the examples — come up with something fresh.\n"
                     "- Do NOT use hashtags, emojis, or quotation marks.\n"
@@ -125,19 +152,19 @@ def generate_voiceover_script() -> str:
 
 
 def generate_voiceover_audio(script: str, output_path: str, max_duration: float = 9.0) -> str:
-    """Use OpenAI TTS to generate a female voiceover audio file.
+    """Use ElevenLabs TTS to generate a female voiceover audio file.
     If the audio exceeds max_duration, speed it up with ffmpeg to fit."""
-    voice = random.choice(FEMALE_VOICES)
-    print(f"[VO] Generating TTS audio (voice: {voice})...")
-    response = openai.audio.speech.create(
-        model="tts-1",
-        voice=voice,
-        input=script,
-        speed=0.95,  # slightly slower for clarity
+    voice_id = random.choice(ELEVEN_VOICES)
+    print(f"[VO] Generating TTS audio (ElevenLabs voice: {voice_id})...")
+    audio = elevenlabs.text_to_speech.convert(
+        voice_id=voice_id,
+        text=script,
+        model_id="eleven_multilingual_v2",
     )
     raw_path = output_path + ".raw.mp3"
     with open(raw_path, "wb") as f:
-        f.write(response.content)
+        for chunk in audio:
+            f.write(chunk)
 
     # Check duration
     probe = subprocess.run(
@@ -520,7 +547,7 @@ def upload_image(image_path: str) -> str:
 def animate_talking(image_url: str, hook: str) -> str:
     """Video 1: Kling 3.0 — she speaks the hook to camera."""
     prompt = (
-        f"The woman looks directly at the camera and speaks naturally, saying: \"{hook}\" "
+        f"The woman looks directly at the camera and speaks clearly, saying exactly: \"{hook}\" "
         f"Her lips move clearly and expressively as she talks. "
         f"Subtle head movement, natural facial expressions, confident energy. "
         f"Cinematic lighting, shallow depth of field, 5 seconds."
@@ -634,15 +661,17 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, 
         inputs.extend(["-i", title_img_path])  # 7: title PNG
 
     filter_complex = (
-        # --- Talk: trim to exactly 5s max (already 1080x1920) ---
-        "[0:v]trim=duration=5,setpts=PTS-STARTPTS[talk_v];"
+        # --- Talk: scale to 1080x1920 (Kling may return slightly off), trim to 5s ---
+        "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=5,setpts=PTS-STARTPTS[talk_v];"
         "[0:a]atrim=duration=5,asetpts=PTS-STARTPTS[talk_a];"
         # --- Screen rec 1: scale to 1080x1920, trim to 3.5s, add silent audio ---
         "[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
         "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=3.5,setpts=PTS-STARTPTS[sr1_v];"
         "anullsrc=r=44100:cl=stereo[s1];[s1]atrim=duration=3.5[sr1_a];"
-        # --- React: trim to 3s, overlay ssUI.png, add silent audio ---
-        "[2:v]trim=duration=3,setpts=PTS-STARTPTS[react_trim];"
+        # --- React: scale to 1080x1920, trim to 3s, overlay ssUI.png, add silent audio ---
+        "[2:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=3,setpts=PTS-STARTPTS[react_trim];"
         "[react_trim][4:v]overlay=0:0[react_v];"
         "anullsrc=r=44100:cl=stereo[s2];[s2]atrim=duration=3[react_a];"
         # --- Screen rec 2: scale to 1080x1920, trim to 3.5s, add silent audio ---
@@ -703,6 +732,54 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, 
     return final_path
 
 
+def upload_to_firebase(local_path: str) -> str:
+    """Upload the final video to Firebase Storage and return the public URL."""
+    if not firebase_admin._apps:
+        print("[FIREBASE] Skipped — no Firebase app initialized.")
+        return ""
+    filename = os.path.basename(local_path)
+    blob_path = f"videos/{filename}"
+    print(f"[FIREBASE] Uploading {filename} -> gs://somesome-a6df1.firebasestorage.app/{blob_path}")
+    bucket = storage.bucket()
+    blob = bucket.blob(blob_path)
+    blob.upload_from_filename(local_path, content_type="video/mp4")
+    blob.make_public()
+    print(f"      Public URL: {blob.public_url}")
+    return blob.public_url
+
+
+def log_to_gsheet(
+    image_name: str,
+    hook: str,
+    vo_script: str,
+    firebase_url: str,
+    final_path: str,
+) -> None:
+    """Append a row to the Google Sheets log."""
+    if _gc is None:
+        print("[GSHEET] Skipped — no service account configured.")
+        return
+    print(f"[GSHEET] Logging to Google Sheets...")
+    sh = _gc.open_by_key(GSHEET_ID)
+    ws = sh.sheet1
+
+    # Add headers if sheet is empty
+    if not ws.get_all_values():
+        ws.append_row(["Timestamp", "Image", "Hook", "Voiceover Script", "Firebase URL", "Local Path"])
+
+    ws.append_row([
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        image_name,
+        hook,
+        vo_script,
+        firebase_url,
+        final_path,
+    ])
+    row_count = len(ws.get_all_values()) - 1
+    print(f"      Row added ({row_count} total entries)")
+    print(f"      Sheet URL: {sh.url}")
+
+
 def main():
     # Args: [image_name]
     image_choice = sys.argv[1] if len(sys.argv) > 1 else None
@@ -749,6 +826,18 @@ def main():
     final_path = os.path.join(OUTPUT_DIR, f"{basename}_final.mp4")
     stitch_videos(talk_path, react_path, vo_path, ass_path, final_path, title_img_path)
 
+    # Step 9: Upload final video to Firebase Storage
+    firebase_url = upload_to_firebase(final_path)
+
+    # Step 10: Log to Google Sheets
+    log_to_gsheet(
+        image_name=os.path.basename(image_path),
+        hook=hook,
+        vo_script=vo_script,
+        firebase_url=firebase_url,
+        final_path=final_path,
+    )
+
     print(f"\n{'='*50}")
     print(f"  Hook:      \"{hook}\"")
     print(f"  Voiceover: \"{vo_script}\"")
@@ -756,6 +845,8 @@ def main():
     print(f"  Talk vid:  {talk_path}")
     print(f"  React vid: {react_path}")
     print(f"  FINAL:     {final_path}")
+    print(f"  Firebase:  {firebase_url}")
+    print(f"  Log:       Google Sheets — {GSHEET_ID}")
     print(f"{'='*50}")
 
 

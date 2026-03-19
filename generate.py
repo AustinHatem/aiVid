@@ -22,10 +22,10 @@ FEMALE_VOICES = ["nova", "shimmer", "alloy"]
 
 # Example voiceover scripts (~9 seconds each) to teach GPT the style
 EXAMPLE_VOICEOVERS = [
-    "Some Some is a chat app where you can meet amazing ladies and chat with them immediately. There are a bunch of new people every day!",
-    "Some Some video chat app is the safest most secure online platform available today. Download now to see what everyone is talking about.",
+    "Someone Somewhere is a chat app where you can meet amazing ladies and chat with them immediately. There are a bunch of new people every day!",
+    "Someone Somewhere video chat app is the safest most secure online platform available today. Download now to see what everyone is talking about.",
     "This app is going crazy viral. Video chat with strangers from all over the world instantly.",
-    "Latina ladies are waiting to live video chat with you right now on Some Some App.",
+    "Latina ladies are waiting to live video chat with you right now on Someone Somewhere App.",
 ]
 
 # Example hooks to teach GPT the style and tone
@@ -33,12 +33,12 @@ EXAMPLE_HOOKS = [
     "Are you looking for secured video chat?",
     "Looking to meet new people?",
     "Want to talk to girls like me?",
-    "The Some Some App is blowing up",
-    "The best app for chatting with new people, Some Some",
+    "The Someone Somewhere App is blowing up",
+    "The best app for chatting with new people, Someone Somewhere",
     "Have you ever tried to video chat with real people?",
     "Enjoy your time with beautiful users all over the world",
-    "Exclusive ladies are waiting to video chat on Some Some",
-    "Some Some is the most secured video chat app",
+    "Exclusive ladies are waiting to video chat on Someone Somewhere",
+    "Someone Somewhere is the most secured video chat app",
     "Want to talk with mommy like me?",
 ]
 
@@ -48,7 +48,7 @@ openai = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 
 def generate_hook() -> str:
-    """Use GPT to generate a short, punchy 5-second ad hook for Some Some."""
+    """Use GPT to generate a short, punchy 5-second ad hook for Someone Somewhere."""
     print("[1/4] Generating ad hook...")
     examples_block = "\n".join(f"- {h}" for h in EXAMPLE_HOOKS)
     resp = openai.chat.completions.create(
@@ -57,13 +57,13 @@ def generate_hook() -> str:
             {
                 "role": "system",
                 "content": (
-                    "You write viral short-form video ad hooks for the Some Some app — "
+                    "You write viral short-form video ad hooks for the Someone Somewhere app — "
                     "a secured video chat app where you can meet and talk to real, beautiful people worldwide.\n\n"
                     "Rules:\n"
                     "- The hook is spoken directly to camera by an attractive woman.\n"
                     "- ONE sentence, under 15 words, takes ~5 seconds to say.\n"
                     "- Flirty, confident, curiosity-driven tone.\n"
-                    "- Must mention 'Some Some' by name.\n"
+                    "- Must mention 'Someone Somewhere' by name.\n"
                     "- Create curiosity, urgency, or a personal invitation.\n"
                     "- Do NOT repeat the examples — come up with something fresh.\n"
                     "- Do NOT use hashtags, emojis, or quotation marks.\n"
@@ -73,7 +73,7 @@ def generate_hook() -> str:
             },
             {
                 "role": "user",
-                "content": "Write a new, unique 5-second spoken ad hook for Some Some.",
+                "content": "Write a new, unique 5-second spoken ad hook for Someone Somewhere.",
             },
         ],
         temperature=1.1,
@@ -85,7 +85,7 @@ def generate_hook() -> str:
 
 
 def generate_voiceover_script() -> str:
-    """Use GPT to generate a ~9-second voiceover script for Some Some."""
+    """Use GPT to generate a ~9-second voiceover script for Someone Somewhere."""
     print("[VO] Generating voiceover script...")
     examples_block = "\n".join(f"- {v}" for v in EXAMPLE_VOICEOVERS)
     resp = openai.chat.completions.create(
@@ -94,14 +94,14 @@ def generate_voiceover_script() -> str:
             {
                 "role": "system",
                 "content": (
-                    "You write voiceover scripts for short-form video ads for the Some Some app — "
+                    "You write voiceover scripts for short-form video ads for the Someone Somewhere app — "
                     "a secured video chat app where you can meet and talk to real, beautiful people worldwide.\n\n"
                     "Rules:\n"
                     "- The voiceover is read by a warm, friendly female narrator.\n"
                     "- It must be 2-3 sentences, around 20-30 words total.\n"
                     "- It should take EXACTLY about 9 seconds to say at a natural pace.\n"
                     "- Enthusiastic, inviting, conversational tone.\n"
-                    "- Must mention 'Some Some' by name at least once.\n"
+                    "- Must mention 'Someone Somewhere' by name at least once.\n"
                     "- Highlight features like: video chat, meeting new people, security, global users, beautiful people.\n"
                     "- Do NOT repeat the examples — come up with something fresh and original.\n"
                     "- Do NOT use hashtags, emojis, or quotation marks.\n"
@@ -111,7 +111,7 @@ def generate_voiceover_script() -> str:
             },
             {
                 "role": "user",
-                "content": "Write a new, unique ~9-second voiceover script for a Some Some ad.",
+                "content": "Write a new, unique ~9-second voiceover script for a Someone Somewhere ad.",
             },
         ],
         temperature=1.1,
@@ -280,9 +280,9 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, final_path: str
         "-i", song,          # 5: background song
         "-i", vo_path,       # 6: voiceover audio
         "-filter_complex",
-        # --- Talk: use as-is (already 1080x1920) ---
-        "[0:v]setpts=PTS-STARTPTS[talk_v];"
-        "[0:a]asetpts=PTS-STARTPTS[talk_a];"
+        # --- Talk: trim to exactly 5s max (already 1080x1920) ---
+        "[0:v]trim=duration=5,setpts=PTS-STARTPTS[talk_v];"
+        "[0:a]atrim=duration=5,asetpts=PTS-STARTPTS[talk_a];"
 
         # --- Screen rec 1: scale to 1080x1920, trim to 3.5s, add silent audio ---
         "[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
@@ -321,6 +321,7 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, final_path: str
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",
+        "-t", "15",  # hard cap at 15 seconds
         final_path,
     ]
 

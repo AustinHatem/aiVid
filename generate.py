@@ -76,8 +76,8 @@ openai = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 
 def generate_hook() -> str:
-    """Use GPT to generate a short, punchy 5-second ad hook for Someone Somewhere."""
-    print("[1/4] Generating ad hook...")
+    """Use GPT to generate a short, punchy ad hook for Someone Somewhere."""
+    print("[1/4] Generating ad hook (~5s)...")
     examples_block = "\n".join(f"- {h}" for h in EXAMPLE_HOOKS)
     resp = openai.chat.completions.create(
         model="gpt-4o",
@@ -89,7 +89,7 @@ def generate_hook() -> str:
                     "a secured video chat app where you can meet and talk to real, beautiful people worldwide.\n\n"
                     "Rules:\n"
                     "- The hook is spoken directly to camera by an attractive woman.\n"
-                    "- ONE sentence, under 15 words, takes ~5 seconds to say.\n"
+                    "- ONE sentence, under 12 words, takes ~5 seconds to say.\n"
                     "- Flirty, confident, curiosity-driven tone.\n"
                     "- Must mention 'Someone Somewhere' by name — always written as exactly 'Someone Somewhere' (two separate words).\n"
                     "- Place 'Someone Somewhere' where it flows naturally and can be clearly enunciated.\n"
@@ -102,7 +102,7 @@ def generate_hook() -> str:
             },
             {
                 "role": "user",
-                "content": "Write a new, unique 5-second spoken ad hook for Someone Somewhere.",
+                "content": "Write a new, unique ~5-second spoken ad hook for Someone Somewhere.",
             },
         ],
         temperature=1.1,
@@ -185,10 +185,11 @@ def generate_voiceover_audio(script: str, output_path: str, max_duration: float 
             capture_output=True, text=True, timeout=30
         )
         os.remove(raw_path)
+        duration = max_duration
     else:
         os.rename(raw_path, output_path)
 
-    print(f"      Voiceover saved: {output_path}")
+    print(f"      Voiceover saved: {output_path} ({duration:.1f}s)")
     return output_path
 
 
@@ -352,7 +353,7 @@ def render_title_image(title: str, font_path: str, output_path: str) -> str:
     pad_x, pad_y = 40, 24
     gap = 0
     corner_radius = 12
-    y_start = 360
+    y_start = 260
 
     for i, line in enumerate(lines):
         # On the last line, append emoji to measure total width
@@ -628,18 +629,23 @@ def pick_song() -> str:
 
 def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, final_path: str, title_img_path: str = None) -> str:
     """
-    Stitch final video:
+    Stitch final video (always 15s total):
       1. Talk video (5s, with audio)
       2. Random screen recording #1 (3.5s)
       3. React video with ssUI.png overlay (3s)
       4. Random screen recording #2 (3.5s)
     Plus: background song (low volume, full duration)
-    Plus: voiceover audio starting at 5s (after talk ends)
-    Plus: optional title overlay PNG (full duration, top of screen)
+    Plus: voiceover audio starting after talk ends
+    Plus: optional title overlay PNG (during talk segment)
     Screen recordings are scaled to 1080x1920 to match.
     """
     sr1, sr2 = pick_screen_recordings()
     song = pick_song()
+    talk_duration = 5.0
+    sr1_dur = 3.5
+    react_dur = 3.0
+    sr2_dur = 3.5
+    vo_delay_ms = int(talk_duration * 1000)
     print("[STITCH] Stitching final video with ffmpeg...")
 
     ass_escaped = ass_path.replace("\\", "\\\\").replace(":", "\\:")
@@ -661,23 +667,27 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, 
         inputs.extend(["-i", title_img_path])  # 7: title PNG
 
     filter_complex = (
-        # --- Talk: scale to 1080x1920 (Kling may return slightly off), trim to 5s ---
-        "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=5,setpts=PTS-STARTPTS[talk_v];"
-        "[0:a]atrim=duration=5,asetpts=PTS-STARTPTS[talk_a];"
-        # --- Screen rec 1: scale to 1080x1920, trim to 3.5s, add silent audio ---
-        "[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=3.5,setpts=PTS-STARTPTS[sr1_v];"
-        "anullsrc=r=44100:cl=stereo[s1];[s1]atrim=duration=3.5[sr1_a];"
-        # --- React: scale to 1080x1920, trim to 3s, overlay ssUI.png, add silent audio ---
-        "[2:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=3,setpts=PTS-STARTPTS[react_trim];"
-        "[react_trim][4:v]overlay=0:0[react_v];"
-        "anullsrc=r=44100:cl=stereo[s2];[s2]atrim=duration=3[react_a];"
-        # --- Screen rec 2: scale to 1080x1920, trim to 3.5s, add silent audio ---
-        "[3:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,trim=duration=3.5,setpts=PTS-STARTPTS[sr2_v];"
-        "anullsrc=r=44100:cl=stereo[s3];[s3]atrim=duration=3.5[sr2_a];"
+        # --- Talk: trim first, then scale/fps/format for clean concat ---
+        f"[0:v]trim=duration={talk_duration},setpts=PTS-STARTPTS,"
+        f"scale=1080:1920:force_original_aspect_ratio=decrease,"
+        f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[talk_v];"
+        f"[0:a]aresample=44100,atrim=duration={talk_duration},asetpts=PTS-STARTPTS[talk_a];"
+        # --- Screen rec 1: trim first, then scale/fps/format, add silent audio ---
+        f"[1:v]trim=duration={sr1_dur},setpts=PTS-STARTPTS,"
+        f"scale=1080:1920:force_original_aspect_ratio=decrease,"
+        f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[sr1_v];"
+        f"anullsrc=r=44100:cl=stereo,atrim=duration={sr1_dur}[sr1_a];"
+        # --- React: trim first, then scale/fps/format, overlay ssUI.png, add silent audio ---
+        f"[2:v]trim=duration={react_dur},setpts=PTS-STARTPTS,"
+        f"scale=1080:1920:force_original_aspect_ratio=decrease,"
+        f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[react_trim];"
+        f"[react_trim][4:v]overlay=0:0[react_v];"
+        f"anullsrc=r=44100:cl=stereo,atrim=duration={react_dur}[react_a];"
+        # --- Screen rec 2: trim first, then scale/fps/format, add silent audio ---
+        f"[3:v]trim=duration={sr2_dur},setpts=PTS-STARTPTS,"
+        f"scale=1080:1920:force_original_aspect_ratio=decrease,"
+        f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[sr2_v];"
+        f"anullsrc=r=44100:cl=stereo,atrim=duration={sr2_dur}[sr2_a];"
         # --- Concat all 4 video segments ---
         "[talk_v][talk_a][sr1_v][sr1_a][react_v][react_a][sr2_v][sr2_a]"
         "concat=n=4:v=1:a=1[cat_v][concat_a];"
@@ -687,21 +697,22 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, 
     if title_img_path:
         filter_complex += (
             f"[cat_v]ass={ass_escaped}:fontsdir={fonts_escaped}[captioned];"
-            "[captioned][7:v]overlay=0:0:enable='between(t,0,5)'[outv];"
+            f"[captioned][7:v]overlay=0:0:enable='between(t,0,{talk_duration})'[outv];"
         )
     else:
         filter_complex += (
             f"[cat_v]ass={ass_escaped}:fontsdir={fonts_escaped}[outv];"
         )
 
+    vo_max_dur = 10.0
     filter_complex += (
         # --- Background song: trim to 15s, low volume ---
         "[5:a]atrim=duration=15,asetpts=PTS-STARTPTS,volume=0.08[song];"
-        # --- Voiceover: delay by 5s (starts after talk), trim to 10s max ---
-        "[6:a]atrim=duration=10,asetpts=PTS-STARTPTS,volume=1.8[vo_trim];"
-        "[vo_trim]adelay=5000|5000[vo];"
+        # --- Voiceover: delay to start after talk, trim to remaining time ---
+        f"[6:a]atrim=duration={vo_max_dur},asetpts=PTS-STARTPTS,volume=1.8[vo_trim];"
+        f"[vo_trim]adelay={vo_delay_ms}|{vo_delay_ms}[vo];"
         # --- Mix all 3 audio layers ---
-        "[concat_a][song][vo]amix=inputs=3:duration=first:dropout_transition=2[outa]"
+        "[concat_a][song][vo]amix=inputs=3:duration=longest:dropout_transition=2[outa]"
     )
 
     cmd = [
@@ -721,7 +732,7 @@ def stitch_videos(talk_path: str, react_path: str, vo_path: str, ass_path: str, 
     ]
 
     has_title = "YES" if title_img_path else "no"
-    print(f"      Segments: talk(5s) → screenRec(3.5s) → react+UI(3s) → screenRec(3.5s)")
+    print(f"      Segments: talk({talk_duration}s) → screenRec({sr1_dur}s) → react+UI({react_dur}s) → screenRec({sr2_dur}s)")
     print(f"      Song: {song} | Voiceover: {vo_path} | Title: {has_title}")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
@@ -738,7 +749,9 @@ def upload_to_firebase(local_path: str) -> str:
         print("[FIREBASE] Skipped — no Firebase app initialized.")
         return ""
     filename = os.path.basename(local_path)
-    blob_path = f"videos/{filename}"
+    name, ext = os.path.splitext(filename)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    blob_path = f"videos/{name}_{timestamp}{ext}"
     print(f"[FIREBASE] Uploading {filename} -> gs://somesome-a6df1.firebasestorage.app/{blob_path}")
     bucket = storage.bucket()
     blob = bucket.blob(blob_path)
@@ -803,7 +816,7 @@ def main():
     talk_path = download(talk_url, f"{basename}_talk.mp4", "talk ")
     react_path = download(react_url, f"{basename}_react.mp4", "react ")
 
-    # Step 6: Generate voiceover (GPT script + OpenAI TTS)
+    # Step 6: Generate voiceover (GPT script + ElevenLabs TTS)
     vo_script = generate_voiceover_script()
     vo_path = os.path.join(OUTPUT_DIR, f"{basename}_vo.mp3")
     generate_voiceover_audio(vo_script, vo_path)

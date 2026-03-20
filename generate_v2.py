@@ -21,7 +21,7 @@ from elevenlabs.client import ElevenLabs
 TALK_MODEL = "kling-video/v3.0/pro/image-to-video"
 # Video 2: Kling 2.1 — silent reaction clip (laughing/smiling)
 REACT_MODEL = "kling-video/v2.1/pro/image-to-video"
-PHOTOS_DIR = "femalePhotos"
+PHOTOS_DIR = "femalePhotosV2"
 SCREEN_REC_DIR = "screenRecording"
 SONGS_DIR = "songs"
 FONTS_DIR = "fonts"
@@ -50,24 +50,24 @@ ELEVEN_VOICES = [
 
 # Example voiceover scripts (~9 seconds each) to teach GPT the style
 EXAMPLE_VOICEOVERS = [
-    "Someone Somewhere is a chat app where you can meet amazing ladies and chat with them immediately. There are a bunch of new people every day!",
-    "Someone Somewhere video chat app is the safest most secure online platform available today. Download now to see what everyone is talking about.",
-    "This app is going crazy viral. Video chat with strangers from all over the world instantly.",
-    "Latina ladies are waiting to live video chat with you right now on Someone Somewhere App.",
+    "Someone Somewhere is where the baddies hang out. Real faces, real convos, no catfish energy.",
+    "Stop scrolling and start talking. Someone Somewhere has the hottest people waiting to vibe with you right now.",
+    "This app is blowing up for a reason. Someone Somewhere lets you video chat with gorgeous strangers instantly.",
+    "Your DMs are dry but Someone Somewhere is not. Real video chat with real people who actually want to talk.",
 ]
 
 # Example hooks to teach GPT the style and tone
 EXAMPLE_HOOKS = [
-    "Are you looking for secured video chat?",
-    "Looking to meet new people?",
-    "Want to talk to girls like me?",
-    "The Someone Somewhere App is blowing up",
-    "The best app for chatting with new people, Someone Somewhere",
-    "Have you ever tried to video chat with real people?",
-    "Enjoy your time with beautiful users all over the world",
-    "Exclusive ladies are waiting to video chat on Someone Somewhere",
-    "Someone Somewhere is the most secured video chat app",
-    "Want to talk with mommy like me?",
+    "You're not ready for Someone Somewhere",
+    "Come find me on Someone Somewhere",
+    "I dare you to match my energy",
+    "Someone Somewhere has me addicted",
+    "This app hits different honestly",
+    "Why are you still single though",
+    "I'm waiting for you on Someone Somewhere",
+    "Someone Somewhere is lowkey dangerous",
+    "POV you finally found Someone Somewhere",
+    "Bet you can't keep up with me",
 ]
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -86,14 +86,16 @@ def generate_hook() -> str:
                 "role": "system",
                 "content": (
                     "You write viral short-form video ad hooks for the Someone Somewhere app — "
-                    "a secured video chat app where you can meet and talk to real, beautiful people worldwide.\n\n"
+                    "a video chat app where you meet and talk to real, attractive people worldwide.\n\n"
                     "Rules:\n"
-                    "- The hook is spoken directly to camera by an attractive woman.\n"
+                    "- The hook is spoken directly to camera by a hot, confident young woman.\n"
                     "- ONE sentence, under 12 words, takes ~5 seconds to say.\n"
-                    "- Flirty, confident, curiosity-driven tone.\n"
+                    "- Edgy, flirty, provocative, slightly teasing — like a viral TikTok thirst trap.\n"
+                    "- Think Gen Z energy: bold, unapologetic, attention-grabbing.\n"
                     "- Must mention 'Someone Somewhere' by name — always written as exactly 'Someone Somewhere' (two separate words).\n"
                     "- Place 'Someone Somewhere' where it flows naturally and can be clearly enunciated.\n"
-                    "- Create curiosity, urgency, or a personal invitation.\n"
+                    "- Create intrigue, FOMO, or a direct personal challenge/invitation.\n"
+                    "- Keep it PG-13 but make it spicy — suggestive, not explicit.\n"
                     "- Do NOT repeat the examples — come up with something fresh.\n"
                     "- Do NOT use hashtags, emojis, or quotation marks.\n"
                     "- Return ONLY the raw sentence, nothing else.\n\n"
@@ -124,14 +126,16 @@ def generate_voiceover_script() -> str:
                 "role": "system",
                 "content": (
                     "You write voiceover scripts for short-form video ads for the Someone Somewhere app — "
-                    "a secured video chat app where you can meet and talk to real, beautiful people worldwide.\n\n"
+                    "a video chat app where you meet and talk to real, attractive people worldwide.\n\n"
                     "Rules:\n"
-                    "- The voiceover is read by a warm, friendly female narrator.\n"
+                    "- The voiceover is read by a young, confident, slightly flirty female narrator.\n"
                     "- It must be 1-2 SHORT sentences, MAX 18 words total.\n"
                     "- It should take about 7-8 seconds to say at a natural pace. Keep it SHORT.\n"
-                    "- Enthusiastic, inviting, conversational tone.\n"
+                    "- Edgy, provocative, Gen Z energy — like narrating a viral TikTok.\n"
+                    "- Suggestive and teasing but PG-13. Make it spicy, not explicit.\n"
                     "- Must mention 'Someone Somewhere' by name at least once.\n"
-                    "- Highlight features like: video chat, meeting new people, security, global users, beautiful people.\n"
+                    "- Create FOMO — make it sound like everyone's already on it and they're missing out.\n"
+                    "- Highlight: hot people, instant video chat, the vibe, the thrill of meeting strangers.\n"
                     "- Do NOT repeat the examples — come up with something fresh and original.\n"
                     "- Do NOT use hashtags, emojis, or quotation marks.\n"
                     "- Return ONLY the raw voiceover text, nothing else.\n\n"
@@ -231,12 +235,12 @@ TITLE_COLORS = [
 
 # Example titles to teach GPT the style
 EXAMPLE_TITLES = [
-    "this app is going viral 🔥",
-    "this app is insane 😍",
-    "POV: you found the best app 👀",
-    "why is nobody talking about this 🤯",
-    "girls love this app 💕",
-    "you NEED this app 🙌",
+    "you're not ready for this 🔥",
+    "she's waiting for you 👀",
+    "this app is lowkey addicting 😍",
+    "POV: you found the vibe 🤭",
+    "no more boring DMs 💅",
+    "main character energy only 🫣",
 ]
 
 
@@ -250,11 +254,12 @@ def generate_title() -> str:
             {
                 "role": "system",
                 "content": (
-                    "You write short TikTok-style title overlays for viral video ads.\n\n"
+                    "You write short TikTok-style title overlays for viral video ads targeting Gen Z.\n\n"
                     "Rules:\n"
                     "- MAX 5-6 words total.\n"
                     "- Must include 1 emoji at the end.\n"
-                    "- Casual, viral, attention-grabbing tone.\n"
+                    "- Edgy, flirty, provocative — like a thirst trap caption.\n"
+                    "- Suggestive but PG-13. Spicy, not explicit.\n"
                     "- All lowercase or mixed case (not ALL CAPS).\n"
                     "- Do NOT repeat the examples — come up with something fresh.\n"
                     "- Do NOT use hashtags or quotation marks.\n"
@@ -548,9 +553,9 @@ def upload_image(image_path: str) -> str:
 def animate_talking(image_url: str, hook: str) -> str:
     """Video 1: Kling 3.0 — she speaks the hook to camera."""
     prompt = (
-        f"The woman looks directly at the camera and speaks clearly, saying exactly: \"{hook}\" "
+        f"The woman looks directly at the camera with a confident expression and speaks clearly, saying exactly: \"{hook}\" "
         f"Her lips move clearly and expressively as she talks. "
-        f"Subtle head movement, natural facial expressions, confident energy. "
+        f"Subtle head movement, natural smile, bold eye contact, energetic vibe. "
         f"Cinematic lighting, shallow depth of field, 5 seconds."
     )
     print(f"[3/5] Animating TALKING video (Kling 3.0)...")
@@ -568,24 +573,36 @@ def animate_talking(image_url: str, hook: str) -> str:
 
 
 def animate_reaction(image_url: str) -> str:
-    """Video 2: Kling 2.1 — she laughs/smiles silently (b-roll reaction)."""
+    """Video 2: Try Kling 2.1 → 2.6 → 3.0 (cheapest first, escalate on NSFW)."""
     prompt = (
-        "The woman smiles warmly then laughs naturally, eyes bright and engaged. "
-        "Gentle head tilt, relaxed and happy expression, looking at camera. "
-        "Soft natural lighting, shallow depth of field, 5 seconds."
+        "The woman smiles brightly then laughs naturally, eyes bright and full of energy. "
+        "Confident expression, relaxed and happy, looking at camera. "
+        "Warm golden lighting, shallow depth of field, 5 seconds."
     )
-    print(f"[4/5] Animating REACTION video (Kling 2.1)...")
+    # Try models cheapest to most expensive, stop at first success
+    models = [
+        (REACT_MODEL, "2.1"),                                    # cheapest
+        ("kling-video/v2.6/pro/image-to-video", "2.6"),         # mid
+        (TALK_MODEL, "3.0"),                                     # most expensive
+    ]
+    print(f"[4/5] Animating REACTION video...")
     print(f"      Prompt: {prompt}")
-    result = higgsfield_client.subscribe(
-        REACT_MODEL,
-        arguments={
-            "image_url": image_url,
-            "prompt": prompt,
-        },
-    )
-    video_url = result["video"]["url"]
-    print(f"      Video ready: {video_url}")
-    return video_url
+    for model, label in models:
+        print(f"      Trying Kling {label}...")
+        result = higgsfield_client.subscribe(
+            model,
+            arguments={
+                "image_url": image_url,
+                "prompt": prompt,
+            },
+        )
+        if "video" in result:
+            video_url = result["video"]["url"]
+            print(f"      Video ready (Kling {label}): {video_url}")
+            return video_url
+        print(f"      Kling {label} flagged NSFW, trying next...")
+
+    raise RuntimeError(f"Kling reaction video failed on all models: {result}")
 
 
 def download(url: str, filename: str, step: str = "") -> str:
@@ -787,7 +804,7 @@ def log_to_gsheet(
         vo_script,
         firebase_url,
         final_path,
-        "v1",
+        "v2",
     ])
     row_count = len(ws.get_all_values()) - 1
     print(f"      Row added ({row_count} total entries)")

@@ -17,7 +17,7 @@ import gspread
 
 # ── Config ────────────────────────────────────────────────────────────────────
 VIDEOS_DIR = "femaleSuprised"
-SWIPE_DIR = "screenRecording/screenswiping"
+SWIPE_DIR = "screenRecording/screenSwiping"
 SCREEN_REC_DIR = "screenRecording"
 PIP_DIR = "girlsChat"
 SONGS_DIR = "songs"

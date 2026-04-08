@@ -88,7 +88,10 @@ def download_video(url: str, filename: str) -> str:
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+    photo_choice = sys.argv[1] if len(sys.argv) > 1 else None
     photos = get_photos(PHOTOS_DIR)
+    if photo_choice:
+        photos = [p for p in photos if os.path.splitext(os.path.basename(p))[0] == photo_choice or os.path.basename(p) == photo_choice]
     if len(photos) == 0:
         sys.exit(f"No photos found in {PHOTOS_DIR}/")
 

@@ -29,7 +29,7 @@ TEXT_FONT = "fonts/TikTokSans-VariableFont_opsz,slnt,wdth,wght.ttf"
 TEXT_SIZE = 72
 TEXT_MAX_WIDTH = 20  # chars per line for wrapping
 GSHEET_ID = "1h1pPMEshYzfCyqA-xc4NHVcGotQk_-S_LzfFhPaPlhQ"
-NUM_VIDEOS = 10
+DEFAULT_NUM_VIDEOS = 10
 
 EXAMPLE_TEXTS = [
     "okay so you swipe, you match, and it just throws you straight into a video call. no texting. nothing. just them, right there.",
@@ -273,10 +273,10 @@ def log_to_gsheet(ad_text: str, firebase_url: str, final_path: str) -> None:
     print(f"      Row added ({row_count} total entries)")
 
 
-def build_one_video(index: int, ad_text: str, mask_path: str, shadow_path: str) -> str:
+def build_one_video(index: int, total_videos: int, ad_text: str, mask_path: str, shadow_path: str) -> str:
     """Build a single 9s video (3 segments) with the given ad text."""
     print(f"\n{'=' * 50}")
-    print(f"  Video {index + 1}/{NUM_VIDEOS}")
+    print(f"  Video {index + 1}/{total_videos}")
     print(f"  Text: \"{ad_text[:60]}...\"")
     print(f"{'=' * 50}")
 
@@ -315,12 +315,13 @@ def build_one_video(index: int, ad_text: str, mask_path: str, shadow_path: str) 
 
 
 def main():
+    num_videos = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_NUM_VIDEOS
     print("=" * 50)
-    print(f"  V4 Pipeline — Generating {NUM_VIDEOS} videos")
+    print(f"  V4 Pipeline — Generating {num_videos} videos")
     print("=" * 50)
 
-    # Pick 10 unique texts from examples
-    texts = random.sample(EXAMPLE_TEXTS, NUM_VIDEOS)
+    # Pick unique texts from examples
+    texts = random.sample(EXAMPLE_TEXTS, num_videos)
 
     print("\nGenerating shared assets (mask + shadow)...")
     mask_path, shadow_path = generate_mask_and_shadow()
@@ -328,7 +329,7 @@ def main():
 
     results = []
     for i, text in enumerate(texts):
-        path = build_one_video(i, text, mask_path, shadow_path)
+        path = build_one_video(i, num_videos, text, mask_path, shadow_path)
         results.append(path)
 
     print(f"\n{'=' * 50}")

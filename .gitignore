@@ -1,5 +1,9 @@
 # Output files
 output/
+output_v5/
+
+# Generated media caches
+girlsChat/*_react.mp4
 
 # Environment / secrets
 .env
@@ -10,6 +14,7 @@ output/
 
 # macOS
 .DS_Store
+__MACOSX/
 
 # Python
 __pycache__/

@@ -8,12 +8,15 @@ SHEET_ID = "1h1pPMEshYzfCyqA-xc4NHVcGotQk_-S_LzfFhPaPlhQ"
 REPO_DIR = "/opt/data/aiVid-main"
 SERVICE_ACCOUNT_GLOB = "/opt/data/aiVid-main/*-firebase-adminsdk-*.json"
 MAX_GENERATE_COUNT = 10
+DATA_START_ROW = 4
+DEFAULT_BG_COLOR = {"red": 1, "green": 1, "blue": 1}
+HIGHLIGHT_BG_COLOR = {"red": 0.85, "green": 0.94, "blue": 0.83}
 
 WORKSHEETS = {
-    "USA Male Ads": {"mode": "loop", "command": ["python3", "generate_v2.py"]},
-    "Latam Female Ads": {"mode": "loop", "command": ["python3", "generate_v3.py"]},
-    "V4 Ads": {"mode": "batch", "command": ["python3", "generate_v4.py"]},
-    "V5 Ads": {"mode": "loop", "command": ["python3", "generate_v5.py"]},
+    "USA Male Ads": {"mode": "loop", "command": ["python3", "generate_v2.py"], "columns": "G"},
+    "Latam Female Ads": {"mode": "loop", "command": ["python3", "generate_v3.py"], "columns": "G"},
+    "V4 Ads": {"mode": "batch", "command": ["python3", "generate_v4.py"], "columns": "E"},
+    "V5 Ads": {"mode": "loop", "command": ["python3", "generate_v5.py"], "columns": "F"},
 }
 
 
@@ -38,6 +41,31 @@ def run_command(command):
     )
 
 
+def last_nonempty_row(ws) -> int:
+    return len(ws.get_all_values())
+
+
+def set_row_background(ws, start_row: int, end_row: int, end_col: str, color: dict):
+    if start_row > end_row:
+        return
+    ws.format(f"A{start_row}:{end_col}{end_row}", {"backgroundColor": color})
+
+
+def refresh_new_row_highlight(ws, end_col: str, previous_last_row: int, current_last_row: int):
+    if current_last_row < DATA_START_ROW:
+        return
+
+    set_row_background(ws, DATA_START_ROW, current_last_row, end_col, DEFAULT_BG_COLOR)
+
+    new_start_row = max(previous_last_row + 1, DATA_START_ROW)
+    if current_last_row >= new_start_row:
+        set_row_background(ws, new_start_row, current_last_row, end_col, HIGHLIGHT_BG_COLOR)
+
+
+def update_run_status(ws, now: str, status: str):
+    ws.update(values=[["Last Run", now], ["Last Result", status]], range_name="A2:B3")
+
+
 def main():
     sa_files = glob.glob(SERVICE_ACCOUNT_GLOB)
     if not sa_files:
@@ -53,34 +81,52 @@ def main():
         ws = sh.worksheet(sheet_name)
         raw_value = ws.acell("B1").value
         count = parse_count(raw_value)
-        ws.update(values=[['Last Run', now]], range_name='A2:B2')
+        previous_last_row = last_nonempty_row(ws)
+        update_run_status(ws, now, "Running")
 
         if count == 0:
+            update_run_status(ws, now, "Skipped (B1=0)")
             results.append(f"{sheet_name}: skipped (B1=0)")
             continue
 
-        if cfg["mode"] == "batch":
-            cmd = cfg["command"] + [str(count)]
-            proc = run_command(cmd)
-            if proc.returncode != 0:
-                tail = (proc.stderr or proc.stdout or "").strip()[-500:]
-                raise RuntimeError(f"{sheet_name} failed running {' '.join(cmd)}: {tail}")
-            ws.update_acell("B1", "0")
-            results.append(f"{sheet_name}: generated {count}, reset B1 to 0")
-            continue
+        try:
+            if cfg["mode"] == "batch":
+                cmd = cfg["command"] + [str(count)]
+                proc = run_command(cmd)
+                if proc.returncode != 0:
+                    tail = (proc.stderr or proc.stdout or "").strip()[-500:]
+                    raise RuntimeError(f"failed running {' '.join(cmd)}: {tail}")
+                current_last_row = last_nonempty_row(ws)
+                refresh_new_row_highlight(ws, cfg["columns"], previous_last_row, current_last_row)
+                ws.update_acell("B1", "0")
+                highlight_start = max(previous_last_row + 1, DATA_START_ROW)
+                update_run_status(ws, now, f"Success: generated {count}")
+                results.append(f"{sheet_name}: generated {count}, highlighted rows {highlight_start}-{current_last_row}, reset B1 to 0")
+                continue
 
-        remaining = count
-        for i in range(count):
-            proc = run_command(cfg["command"])
-            if proc.returncode != 0:
-                tail = (proc.stderr or proc.stdout or "").strip()[-500:]
-                raise RuntimeError(
-                    f"{sheet_name} failed on run {i+1}/{count}; remaining count left in B1={remaining}. Error tail: {tail}"
-                )
-            remaining -= 1
-            ws.update_acell("B1", str(remaining))
+            remaining = count
+            for i in range(count):
+                proc = run_command(cfg["command"])
+                if proc.returncode != 0:
+                    tail = (proc.stderr or proc.stdout or "").strip()[-500:]
+                    raise RuntimeError(
+                        f"failed on run {i+1}/{count}; remaining count left in B1={remaining}. Error tail: {tail}"
+                    )
+                remaining -= 1
+                ws.update_acell("B1", str(remaining))
+                current_last_row = last_nonempty_row(ws)
+                refresh_new_row_highlight(ws, cfg["columns"], previous_last_row, current_last_row)
 
-        results.append(f"{sheet_name}: generated {count}, reset B1 to 0")
+            current_last_row = last_nonempty_row(ws)
+            highlight_start = max(previous_last_row + 1, DATA_START_ROW)
+            update_run_status(ws, now, f"Success: generated {count}")
+            results.append(f"{sheet_name}: generated {count}, highlighted rows {highlight_start}-{current_last_row}, reset B1 to 0")
+        except Exception as exc:
+            current_last_row = last_nonempty_row(ws)
+            if current_last_row > previous_last_row:
+                refresh_new_row_highlight(ws, cfg["columns"], previous_last_row, current_last_row)
+            update_run_status(ws, now, f"Error: {str(exc)[:120]}")
+            results.append(f"{sheet_name}: {exc}")
 
     print(f"aiVid sheet generator run at {now}")
     for line in results:
